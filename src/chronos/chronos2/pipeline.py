@@ -37,6 +37,71 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def compute_input_similarity(
+    context: torch.Tensor,
+    similarity_type: str = "correlation",
+    **kwargs
+) -> torch.Tensor:
+    """
+    Compute pairwise similarity between time series in batch for soft group masking.
+
+    Args:
+        context: raw input tensor (batch, context_length)
+        similarity_type: "correlation", "cosine", or "distance"
+        **kwargs: additional parameters (e.g., distance_scale for distance-based similarity)
+
+    Returns:
+        similarity_matrix: (batch, batch) with values in [0, 1]
+    """
+    if similarity_type == "correlation":
+        # Pearson correlation
+        context_mean = context.mean(dim=1, keepdim=True)
+        context_std = context.std(dim=1, keepdim=True) + 1e-8
+        context_norm = (context - context_mean) / context_std
+
+        correlation = torch.matmul(context_norm, context_norm.transpose(0, 1))
+        correlation = correlation / context.shape[1]
+
+        # Map from [-1, 1] to [0, 1]
+        similarity = (correlation + 1.0) / 2.0
+
+    elif similarity_type == "cosine":
+        # Cosine similarity
+        import torch.nn.functional as F
+        context_norm = F.normalize(context, p=2, dim=1)
+        similarity = torch.matmul(context_norm, context_norm.transpose(0, 1))
+        similarity = (similarity + 1.0) / 2.0
+
+    elif similarity_type == "distance":
+        # Gaussian kernel on Euclidean distance
+        scale = kwargs.get("distance_scale", 1.0)
+
+        # Normalize to [0, 1] range
+        context_min = context.min(dim=1, keepdim=True)[0]
+        context_max = context.max(dim=1, keepdim=True)[0]
+        context_norm = (context - context_min) / (context_max - context_min + 1e-8)
+
+        # Compute pairwise squared Euclidean distance
+        x_norm = (context_norm ** 2).sum(dim=1, keepdim=True)
+        y_norm = x_norm.transpose(0, 1)
+        xy = torch.matmul(context_norm, context_norm.transpose(0, 1))
+
+        distances = x_norm + y_norm - 2 * xy
+        distances = torch.sqrt(torch.clamp(distances, min=0.0))
+
+        # Convert to similarity using Gaussian kernel
+        similarity = torch.exp(-distances / scale)
+
+    else:
+        raise ValueError(f"Unknown similarity_type: {similarity_type}")
+
+    # Ensure diagonal is 1.0 (self-similarity)
+    batch_size = similarity.shape[0]
+    similarity.fill_diagonal_(1.0)
+
+    return similarity
+
+
 class Chronos2Pipeline(BaseChronosPipeline):
     forecast_type: ForecastType = ForecastType.QUANTILES
     default_context_length: int = 2048
@@ -388,6 +453,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
         unrolled_quantiles: torch.Tensor,
         unrolled_sample_weights: torch.Tensor,
         num_output_patches: int,
+        use_soft_group_mask: bool = False,
+        similarity_type: str = "correlation",
+        soft_mask_temperature: float = 5.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Get unrolled_quantiles from prediction and append it to the expanded context
         prediction_unrolled = interpolate_quantiles(
@@ -414,6 +482,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
             else None,
             group_ids=rearrange(group_ids, "b n -> (b n)"),
             num_output_patches=num_output_patches,
+            use_soft_group_mask=use_soft_group_mask,
+            similarity_type=similarity_type,
+            soft_mask_temperature=soft_mask_temperature,
         )
         # Reshape predictions from (batch * n_paths, n_quantiles, length) to (batch, n_paths * n_quantiles, length)
         prediction = rearrange(prediction, "(b n) q h -> b (n q) h", n=n_paths)
@@ -438,6 +509,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
         context_length: int | None = None,
         predict_batches_jointly: bool = False,
         limit_prediction_length: bool = False,
+        use_soft_group_mask: bool = False,
+        similarity_type: str = "correlation",
+        soft_mask_temperature: float = 5.0,
         **kwargs,
     ) -> list[torch.Tensor]:
         """
@@ -610,6 +684,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
                 prediction_length=prediction_length,
                 max_output_patches=max_output_patches,
                 target_idx_ranges=batch_target_idx_ranges,
+                use_soft_group_mask=use_soft_group_mask,
+                similarity_type=similarity_type,
+                soft_mask_temperature=soft_mask_temperature,
             )
             all_predictions.extend(batch_prediction)
 
@@ -624,6 +701,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
         prediction_length: int,
         max_output_patches: int,
         target_idx_ranges: list[tuple[int, int]],
+        use_soft_group_mask: bool = False,
+        similarity_type: str = "correlation",
+        soft_mask_temperature: float = 5.0,
     ) -> list[torch.Tensor]:
         context = context.to(device=self.model.device, dtype=torch.float32)
         group_ids = group_ids.to(device=self.model.device)
@@ -644,6 +724,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
             group_ids=group_ids,
             future_covariates=future_covariates,
             num_output_patches=get_num_output_patches(remaining),
+            use_soft_group_mask=use_soft_group_mask,
+            similarity_type=similarity_type,
+            soft_mask_temperature=soft_mask_temperature,
         )
         predictions.append(prediction)
         remaining -= prediction.shape[-1]
@@ -669,6 +752,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
                 unrolled_quantiles=unrolled_quantiles_tensor,
                 unrolled_sample_weights=unrolled_sample_weights,
                 num_output_patches=get_num_output_patches(remaining),
+                use_soft_group_mask=use_soft_group_mask,
+                similarity_type=similarity_type,
+                soft_mask_temperature=soft_mask_temperature,
             )
             predictions.append(prediction)
             remaining -= prediction.shape[-1]
@@ -685,6 +771,9 @@ class Chronos2Pipeline(BaseChronosPipeline):
         group_ids: torch.Tensor,
         future_covariates: torch.Tensor | None,
         num_output_patches: int,
+        use_soft_group_mask: bool = False,
+        similarity_type: str = "correlation",
+        soft_mask_temperature: float = 5.0,
     ) -> torch.Tensor:
         kwargs = {}
         if future_covariates is not None:
@@ -701,6 +790,16 @@ class Chronos2Pipeline(BaseChronosPipeline):
             else:
                 future_covariates = future_covariates[..., :output_size]
             kwargs["future_covariates"] = future_covariates
+
+        # Compute similarity matrix for soft group masking
+        if use_soft_group_mask:
+            similarity_matrix = compute_input_similarity(
+                context,
+                similarity_type=similarity_type,
+            )
+            kwargs["similarity_matrix"] = similarity_matrix
+            kwargs["soft_mask_temperature"] = soft_mask_temperature
+
         with torch.no_grad():
             prediction: torch.Tensor = self.model(
                 context=context, group_ids=group_ids, num_output_patches=num_output_patches, **kwargs

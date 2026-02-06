@@ -131,6 +131,67 @@ class Chronos2Encoder(nn.Module):
 
         return group_time_mask
 
+    @staticmethod
+    def _construct_soft_group_time_mask(
+        group_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        similarity_matrix: torch.Tensor,
+        floating_type: torch.dtype,
+        temperature: float = 5.0,
+    ) -> torch.Tensor:
+        """
+        Construct soft group-time mask allowing cross-group attention weighted by similarity.
+
+        Args:
+            group_ids: (batch_size,) group IDs
+            attention_mask: (batch_size, seq_len) time mask
+            similarity_matrix: (batch_size, batch_size) pairwise similarity in [0, 1]
+            floating_type: dtype for mask
+            temperature: higher = more permissive cross-group attention
+
+        Returns:
+            group_time_mask: (time, 1, batch, batch) soft mask
+        """
+        # Construct hard group mask (binary)
+        hard_group_mask = (group_ids[:, None] == group_ids[None, :]).float()  # (batch, batch)
+
+        # For within-group: use similarity = 1.0
+        # For cross-group: use provided similarity
+        soft_group_mask = hard_group_mask + (1 - hard_group_mask) * similarity_matrix
+
+        # Convert soft mask [0, 1] to additive attention bias [-inf, 0]
+        # similarity = 1.0 → bias = 0 (full attention)
+        # similarity = 0.0 → bias = -inf (no attention)
+        # similarity = 0.5 → bias = intermediate penalty
+
+        # Use log-scale mapping with temperature
+        eps = 1e-10
+        attention_bias = torch.log(soft_group_mask + eps) * temperature
+        # Clamp to avoid numerical issues
+        attention_bias = torch.clamp(attention_bias, min=torch.finfo(floating_type).min / 10)
+
+        # Combine with time mask: only attend where time is valid AND soft_group allows
+        batch_size, seq_len = attention_mask.shape
+
+        # Expand attention_mask: (batch, seq_len) → (batch, 1, seq_len) → (batch, batch, seq_len)
+        time_mask_expanded = attention_mask.unsqueeze(1).expand(batch_size, batch_size, seq_len)
+
+        # Expand attention_bias: (batch, batch) → (batch, batch, seq_len)
+        attention_bias_expanded = attention_bias.unsqueeze(2).expand(batch_size, batch_size, seq_len)
+
+        # Where time is masked (attention_mask=0), set bias to -inf
+        # Where time is valid (attention_mask=1), use the group-based soft bias
+        final_mask = torch.where(
+            time_mask_expanded > 0.5,
+            attention_bias_expanded,
+            torch.full_like(attention_bias_expanded, torch.finfo(floating_type).min)
+        )
+
+        # Reshape to (time, 1, query_batch, key_batch) to match expected shape
+        final_mask = rearrange(final_mask, "q b t -> t 1 q b")
+
+        return final_mask
+
     def forward(
         self,
         inputs_embeds: torch.Tensor,
@@ -139,6 +200,8 @@ class Chronos2Encoder(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
         output_attentions: bool = False,
+        similarity_matrix: torch.Tensor | None = None,
+        soft_mask_temperature: float = 5.0,
     ) -> Chronos2EncoderOutput:
         batch_size, seq_length = inputs_embeds.size()[:-1]
 
@@ -151,8 +214,15 @@ class Chronos2Encoder(nn.Module):
         # make the time attention mask broadcastable to attention scores (batch, n_heads, q_len, kv_len) and invert
         extended_attention_mask = self._expand_and_invert_time_attention_mask(attention_mask, inputs_embeds.dtype)
 
-        # construct group time mask
-        group_time_mask = self._construct_and_invert_group_time_mask(group_ids, attention_mask, inputs_embeds.dtype)
+        # construct group time mask (with optional soft masking)
+        if similarity_matrix is not None:
+            # Use soft masking with learned similarity
+            group_time_mask = self._construct_soft_group_time_mask(
+                group_ids, attention_mask, similarity_matrix, inputs_embeds.dtype, soft_mask_temperature
+            )
+        else:
+            # Use original hard masking
+            group_time_mask = self._construct_and_invert_group_time_mask(group_ids, attention_mask, inputs_embeds.dtype)
 
         all_time_self_attentions: tuple[torch.Tensor, ...] = ()
         all_group_self_attentions: tuple[torch.Tensor, ...] = ()
@@ -558,6 +628,8 @@ class Chronos2Model(PreTrainedModel):
         future_target: torch.Tensor | None = None,
         future_target_mask: torch.Tensor | None = None,
         output_attentions: bool = False,
+        similarity_matrix: torch.Tensor | None = None,
+        soft_mask_temperature: float = 5.0,
     ):
         self._validate_input(
             context=context,
@@ -612,6 +684,8 @@ class Chronos2Model(PreTrainedModel):
             inputs_embeds=input_embeds,
             group_ids=group_ids,
             output_attentions=output_attentions,
+            similarity_matrix=similarity_matrix,
+            soft_mask_temperature=soft_mask_temperature,
         )
         return encoder_outputs, loc_scale, patched_future_covariates_mask, num_context_patches
 
@@ -626,6 +700,8 @@ class Chronos2Model(PreTrainedModel):
         future_target: torch.Tensor | None = None,
         future_target_mask: torch.Tensor | None = None,
         output_attentions: bool = False,
+        similarity_matrix: torch.Tensor | None = None,
+        soft_mask_temperature: float = 5.0,
     ) -> Chronos2Output:
         """Forward pass of the Chronos2 model.
 
@@ -704,6 +780,8 @@ class Chronos2Model(PreTrainedModel):
             future_target=future_target,
             future_target_mask=future_target_mask,
             output_attentions=output_attentions,
+            similarity_matrix=similarity_matrix,
+            soft_mask_temperature=soft_mask_temperature,
         )
         hidden_states: torch.Tensor = encoder_outputs[0]
         assert hidden_states.shape == (batch_size, num_context_patches + 1 + num_output_patches, self.model_dim)
