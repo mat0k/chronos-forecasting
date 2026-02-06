@@ -56,7 +56,13 @@ def compute_input_similarity(
     if similarity_type == "correlation":
         # Pearson correlation
         context_mean = context.mean(dim=1, keepdim=True)
-        context_std = context.std(dim=1, keepdim=True) + 1e-8
+        context_std = context.std(dim=1, keepdim=True)
+
+        # Handle zero-variance series (constant values)
+        # Set std to 1 for zero-variance series (will result in 0 correlation)
+        zero_variance_mask = context_std < 1e-8
+        context_std = torch.where(zero_variance_mask, torch.ones_like(context_std), context_std)
+
         context_norm = (context - context_mean) / context_std
 
         correlation = torch.matmul(context_norm, context_norm.transpose(0, 1))
@@ -65,12 +71,19 @@ def compute_input_similarity(
         # Map from [-1, 1] to [0, 1]
         similarity = (correlation + 1.0) / 2.0
 
+        # Handle any remaining NaN values (e.g., from numerical issues)
+        # Replace NaN with 0.5 (neutral similarity)
+        similarity = torch.nan_to_num(similarity, nan=0.5)
+
     elif similarity_type == "cosine":
         # Cosine similarity
         import torch.nn.functional as F
         context_norm = F.normalize(context, p=2, dim=1)
         similarity = torch.matmul(context_norm, context_norm.transpose(0, 1))
         similarity = (similarity + 1.0) / 2.0
+
+        # Handle any NaN values from zero-norm vectors
+        similarity = torch.nan_to_num(similarity, nan=0.5)
 
     elif similarity_type == "distance":
         # Gaussian kernel on Euclidean distance
@@ -79,7 +92,11 @@ def compute_input_similarity(
         # Normalize to [0, 1] range
         context_min = context.min(dim=1, keepdim=True)[0]
         context_max = context.max(dim=1, keepdim=True)[0]
-        context_norm = (context - context_min) / (context_max - context_min + 1e-8)
+        range_val = context_max - context_min
+
+        # Handle constant series (zero range)
+        range_val = torch.where(range_val < 1e-8, torch.ones_like(range_val), range_val)
+        context_norm = (context - context_min) / range_val
 
         # Compute pairwise squared Euclidean distance
         x_norm = (context_norm ** 2).sum(dim=1, keepdim=True)
@@ -91,6 +108,9 @@ def compute_input_similarity(
 
         # Convert to similarity using Gaussian kernel
         similarity = torch.exp(-distances / scale)
+
+        # Handle any NaN values
+        similarity = torch.nan_to_num(similarity, nan=0.5)
 
     else:
         raise ValueError(f"Unknown similarity_type: {similarity_type}")
