@@ -185,25 +185,13 @@ def validate_df_inputs(
         if context_ids != future_ids:
             raise ValueError("future_df must contain the same time series IDs as df")
 
-        future_series_lengths = future_df[id_column].value_counts(sort=False).to_list()
-
-        # Validate future series lengths match prediction_length
-        future_start_idx = 0
-        future_timestamps_index = pd.DatetimeIndex(future_df[timestamp_column])
-        for future_length in future_series_lengths:
-            future_timestamps = future_timestamps_index[future_start_idx : future_start_idx + future_length]
-            future_series_id = future_df[id_column].iloc[future_start_idx]
-            if future_length != prediction_length:
-                raise ValueError(
-                    f"Future covariates all time series must have length {prediction_length}, got {future_length} for series {future_series_id}"
-                )
-            if future_length < 3 or inferred_freq != validate_freq(future_timestamps, future_series_id):
-                raise ValueError(
-                    f"Future covariates must have the same frequency as context, found series {future_series_id} with a different frequency"
-                )
-            future_start_idx += future_length
-
-        assert len(series_lengths) == len(future_series_lengths)
+        future_series_lengths = future_df[id_column].value_counts(sort=False)
+        if (future_series_lengths != prediction_length).any():
+            invalid_series = future_series_lengths[future_series_lengths != prediction_length]
+            raise ValueError(
+                f"future_df must contain {prediction_length=} values for each series, "
+                f"but found series with different lengths: {invalid_series.to_dict()}"
+            )
 
     return df, future_df, inferred_freq, series_lengths, original_order
 
@@ -216,6 +204,7 @@ def convert_df_input_to_list_of_dicts_input(
     id_column: str = "item_id",
     timestamp_column: str = "timestamp",
     validate_inputs: bool = True,
+    freq: str | None = None,
 ) -> tuple[list[dict[str, np.ndarray | dict[str, np.ndarray]]], np.ndarray, dict[str, "pd.DatetimeIndex"]]:
     """
     Convert from dataframe input format to a list of dictionaries input format.
@@ -242,7 +231,14 @@ def convert_df_input_to_list_of_dicts_input(
     timestamp_column
         Name of column containing timestamps
     validate_inputs
-        When True, the dataframe(s) will be validated be conversion
+        [ADVANCED] When True (default), validates dataframes before prediction. Setting to False removes the
+        validation overhead, but may silently lead to wrong predictions if data is misformatted. When False, you
+        must ensure: (1) all dataframes are sorted by (id_column, timestamp_column); (2) future_df (if provided)
+        has the same item IDs as df with exactly prediction_length rows of future timestamps per item; (3) all
+        timestamps are regularly spaced (e.g., with hourly frequency).
+    freq
+        Frequency string for timestamp generation (e.g., "h", "D", "W"). Can only be used
+        when validate_inputs=False. When provided, skips frequency inference from the data.
 
     Returns
     -------
@@ -253,6 +249,16 @@ def convert_df_input_to_list_of_dicts_input(
     """
 
     import pandas as pd
+
+    if freq is not None and validate_inputs:
+        raise ValueError(
+            "freq can only be provided when validate_inputs=False. "
+            "When using freq with validate_inputs=False, you must ensure: "
+            "(1) all dataframes are sorted by (id_column, timestamp_column);  "
+            "(2) future_df (if provided) has the same item IDs as df with exactly "
+            "prediction_length rows of future timestamps per item; "
+            "(3) all timestamps are regularly spaced."
+        )
 
     if validate_inputs:
         df, future_df, freq, series_lengths, original_order = validate_df_inputs(
@@ -270,19 +276,19 @@ def convert_df_input_to_list_of_dicts_input(
         # Get series lengths
         series_lengths = df[id_column].value_counts(sort=False).to_list()
 
-        # If validation is skipped, the first freq in the dataframe is used
-        timestamp_index = pd.DatetimeIndex(df[timestamp_column])
-        start_idx = 0
-        freq = None
-        for length in series_lengths:
-            if length < 3:
-                start_idx += length
-                continue
-            timestamps = timestamp_index[start_idx : start_idx + length]
-            freq = pd.infer_freq(timestamps)
-            break
+        # If freq is not provided, infer from the first series with >= 3 points
+        if freq is None:
+            timestamp_index = pd.DatetimeIndex(df[timestamp_column])
+            start_idx = 0
+            for length in series_lengths:
+                if length < 3:
+                    start_idx += length
+                    continue
+                timestamps = timestamp_index[start_idx : start_idx + length]
+                freq = pd.infer_freq(timestamps)
+                break
 
-        assert freq is not None, "validate is False, but could not infer frequency from the dataframe"
+            assert freq is not None, "validate_inputs is False, but could not infer frequency from the dataframe"
 
     # Convert to list of dicts format
     inputs: list[dict[str, np.ndarray | dict[str, np.ndarray]]] = []
@@ -303,10 +309,16 @@ def convert_df_input_to_list_of_dicts_input(
     past_covariates_dict = {
         col: df[col].to_numpy() for col in df.columns if col not in [id_column, timestamp_column] + target_columns
     }
+    future_covariates_dict = {}
     if future_df is not None:
-        future_covariates_dict = {
-            col: future_df[col].to_numpy() for col in future_df.columns if col not in [id_column, timestamp_column]
-        }
+        for col in future_df.columns.drop([id_column, timestamp_column]):
+            future_covariates_dict[col] = future_df[col].to_numpy()
+        if validate_inputs:
+            if (pd.DatetimeIndex(future_df[timestamp_column]) != pd.DatetimeIndex(prediction_timestamps_array)).any():
+                raise ValueError(
+                    "future_df timestamps do not match the expected prediction timestamps. "
+                    "You can disable this check by setting `validate_inputs=False`"
+                )
 
     for i in range(len(series_lengths)):
         start_idx, end_idx = indptr[i], indptr[i + 1]
@@ -316,23 +328,12 @@ def convert_df_input_to_list_of_dicts_input(
         prediction_timestamps[series_id] = prediction_timestamps_array[future_start_idx:future_end_idx]
         task: dict[str, np.ndarray | dict[str, np.ndarray]] = {"target": target_array[:, start_idx:end_idx]}
 
-        # Handle covariates if present
         if len(past_covariates_dict) > 0:
             task["past_covariates"] = {col: values[start_idx:end_idx] for col, values in past_covariates_dict.items()}
-
-            # Handle future covariates
-            if future_df is not None:
-                first_future_timestamp = future_df[timestamp_column].iloc[future_start_idx]
-                assert first_future_timestamp == prediction_timestamps[series_id][0], (
-                    f"the first timestamp in future_df must be the first forecast timestamp, found mismatch "
-                    f"({first_future_timestamp} != {prediction_timestamps[series_id][0]}) in series {series_id}"
-                )
-
-                if len(future_covariates_dict) > 0:
-                    task["future_covariates"] = {
-                        col: values[future_start_idx:future_end_idx] for col, values in future_covariates_dict.items()
-                    }
-
+            if len(future_covariates_dict) > 0:
+                task["future_covariates"] = {
+                    col: values[future_start_idx:future_end_idx] for col, values in future_covariates_dict.items()
+                }
         inputs.append(task)
 
     assert len(inputs) == len(series_lengths)

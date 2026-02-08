@@ -141,6 +141,8 @@ class BaseChronosPipeline(metaclass=PipelineRegistry):
         target: str = "target",
         prediction_length: int | None = None,
         quantile_levels: list[float] = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        validate_inputs: bool = True,
+        freq: str | None = None,
         **predict_kwargs,
     ) -> "pd.DataFrame":
         """
@@ -162,6 +164,15 @@ class BaseChronosPipeline(metaclass=PipelineRegistry):
             Number of steps to predict for each time series
         quantile_levels
             Quantile levels to compute
+        validate_inputs
+            [ADVANCED] When True (default), validates dataframes before prediction. Setting to False removes the
+            validation overhead, but may silently lead to wrong predictions if data is misformatted. When False, you
+            must ensure: (1) all dataframes are sorted by (id_column, timestamp_column); (2) future_df (if provided)
+            has the same item IDs as df with exactly prediction_length rows of future timestamps per item; (3) all
+            timestamps are regularly spaced (e.g., with hourly frequency).
+        freq
+            Frequency string for timestamp generation (e.g., "h", "D", "W"). Can only be used when
+            validate_inputs=False. When provided, skips frequency inference from the data.
         **predict_kwargs
             Additional arguments passed to predict_quantiles
 
@@ -196,6 +207,8 @@ class BaseChronosPipeline(metaclass=PipelineRegistry):
             timestamp_column=timestamp_column,
             target_columns=[target],
             prediction_length=prediction_length,
+            freq=freq,
+            validate_inputs=validate_inputs,
         )
 
         # NOTE: any covariates, if present, are ignored here
@@ -213,22 +226,26 @@ class BaseChronosPipeline(metaclass=PipelineRegistry):
         quantiles_np = quantiles.numpy()  # [n_series, horizon, num_quantiles]
         mean_np = mean.numpy()  # [n_series, horizon]
 
-        results_dfs = []
-        for i, (series_id, future_ts) in enumerate(prediction_timestamps.items()):
-            q_pred = quantiles_np[i]  # (horizon, num_quantiles)
-            point_pred = mean_np[i]  # (horizon)
+        series_ids = list(prediction_timestamps.keys())
+        future_ts = list(prediction_timestamps.values())
 
-            series_forecast_data = {id_column: series_id, timestamp_column: future_ts, "target_name": target}
-            series_forecast_data["predictions"] = point_pred
-            for q_idx, q_level in enumerate(quantile_levels):
-                series_forecast_data[str(q_level)] = q_pred[:, q_idx]
+        data = {
+            id_column: np.repeat(series_ids, prediction_length),
+            timestamp_column: np.concatenate(future_ts),
+            "target_name": target,
+            "predictions": mean_np.ravel(),
+        }
 
-            results_dfs.append(pd.DataFrame(series_forecast_data))
+        quantiles_flat = quantiles_np.reshape(-1, len(quantile_levels))
+        for q_idx, q_level in enumerate(quantile_levels):
+            data[str(q_level)] = quantiles_flat[:, q_idx]
 
-        predictions_df = pd.concat(results_dfs, ignore_index=True)
-        predictions_df.set_index(id_column, inplace=True)
-        predictions_df = predictions_df.loc[original_order]
-        predictions_df.reset_index(inplace=True)
+        predictions_df = pd.DataFrame(data)
+        # If validate_inputs=False, the df is used as-is without sorting by item_id, no reordering required
+        if validate_inputs:
+            predictions_df.set_index(id_column, inplace=True)
+            predictions_df = predictions_df.loc[original_order]
+            predictions_df.reset_index(inplace=True)
 
         return predictions_df
 
