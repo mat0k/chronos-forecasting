@@ -21,7 +21,6 @@ from .layers import (
     MLP,
     AttentionOutput,
     Chronos2LayerNorm,
-    CrossGroupAttention,
     FeedForward,
     GroupSelfAttention,
     ResidualBlock,
@@ -34,7 +33,6 @@ class Chronos2EncoderBlockOutput(ModelOutput):
     hidden_states: torch.Tensor | None = None
     time_self_attn_weights: torch.Tensor | None = None
     group_self_attn_weights: torch.Tensor | None = None
-    cross_group_attn_weights: torch.Tensor | None = None
 
 
 class Chronos2EncoderBlock(nn.Module):
@@ -42,13 +40,9 @@ class Chronos2EncoderBlock(nn.Module):
         super().__init__()
         assert not config.is_decoder
 
-        self.use_cross_group_attention = getattr(config, 'use_cross_group_attention', False)
-        
         self.layer = nn.ModuleList()
         self.layer.append(TimeSelfAttention(config))
         self.layer.append(GroupSelfAttention(config))
-        if self.use_cross_group_attention:
-            self.cross_group_attention = CrossGroupAttention(config)
         self.layer.append(FeedForward(config))
 
     def forward(
@@ -58,7 +52,6 @@ class Chronos2EncoderBlock(nn.Module):
         position_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         group_time_mask: torch.Tensor,
-        group_ids: torch.Tensor | None = None,
         output_attentions: bool = False,
     ) -> Chronos2EncoderBlockOutput:
         # apply time attention
@@ -70,29 +63,19 @@ class Chronos2EncoderBlock(nn.Module):
         )
         hidden_states = time_self_attn_outputs[0]
 
-        # apply group attention (within-group)
+        # apply group attention
         group_self_attn_outputs: AttentionOutput = self.layer[1](
             hidden_states, attention_mask=group_time_mask, output_attentions=output_attentions
         )
         hidden_states = group_self_attn_outputs[0]
 
-        # apply cross-group attention (between groups) - NEW!
-        cross_group_attn_weights = None
-        if self.use_cross_group_attention and group_ids is not None:
-            cross_group_attn_outputs: AttentionOutput = self.cross_group_attention(
-                hidden_states, group_ids=group_ids, output_attentions=output_attentions
-            )
-            hidden_states = cross_group_attn_outputs[0]
-            cross_group_attn_weights = cross_group_attn_outputs.attn_weights
-
         # apply feed forward layer
-        hidden_states = self.layer[-1](hidden_states)
+        hidden_states = self.layer[2](hidden_states)
 
         return Chronos2EncoderBlockOutput(
             hidden_states=hidden_states,
             time_self_attn_weights=time_self_attn_outputs.attn_weights,
             group_self_attn_weights=group_self_attn_outputs.attn_weights,
-            cross_group_attn_weights=cross_group_attn_weights,
         )
 
 
@@ -101,7 +84,6 @@ class Chronos2EncoderOutput(ModelOutput):
     last_hidden_state: torch.Tensor | None = None
     all_time_self_attn_weights: tuple[torch.Tensor, ...] | None = None
     all_group_self_attn_weights: tuple[torch.Tensor, ...] | None = None
-    all_cross_group_attn_weights: tuple[torch.Tensor, ...] | None = None
 
 
 class Chronos2Encoder(nn.Module):
@@ -112,7 +94,6 @@ class Chronos2Encoder(nn.Module):
         self.block = nn.ModuleList([Chronos2EncoderBlock(config) for i in range(config.num_layers)])
         self.final_layer_norm = Chronos2LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
-        self.use_cross_group_attention = getattr(config, 'use_cross_group_attention', False)
 
     @staticmethod
     def _expand_and_invert_time_attention_mask(
@@ -175,7 +156,6 @@ class Chronos2Encoder(nn.Module):
 
         all_time_self_attentions: tuple[torch.Tensor, ...] = ()
         all_group_self_attentions: tuple[torch.Tensor, ...] = ()
-        all_cross_group_attentions: tuple[torch.Tensor, ...] = ()
 
         hidden_states = self.dropout(inputs_embeds)
 
@@ -185,7 +165,6 @@ class Chronos2Encoder(nn.Module):
                 position_ids=position_ids,
                 attention_mask=extended_attention_mask,
                 group_time_mask=group_time_mask,
-                group_ids=group_ids if self.use_cross_group_attention else None,
                 output_attentions=output_attentions,
             )
 
@@ -197,8 +176,6 @@ class Chronos2Encoder(nn.Module):
 
                 all_time_self_attentions = (*all_time_self_attentions, layer_outputs.time_self_attn_weights)
                 all_group_self_attentions = (*all_group_self_attentions, layer_outputs.group_self_attn_weights)
-                if layer_outputs.cross_group_attn_weights is not None:
-                    all_cross_group_attentions = (*all_cross_group_attentions, layer_outputs.cross_group_attn_weights)
 
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -207,7 +184,6 @@ class Chronos2Encoder(nn.Module):
             last_hidden_state=hidden_states,
             all_time_self_attn_weights=all_time_self_attentions,
             all_group_self_attn_weights=all_group_self_attentions,
-            all_cross_group_attn_weights=all_cross_group_attentions if all_cross_group_attentions else None,
         )
 
 
@@ -217,7 +193,6 @@ class Chronos2Output(ModelOutput):
     quantile_preds: torch.Tensor | None = None
     enc_time_self_attn_weights: tuple[torch.Tensor, ...] | None = None
     enc_group_self_attn_weights: tuple[torch.Tensor, ...] | None = None
-    enc_cross_group_attn_weights: tuple[torch.Tensor, ...] | None = None
 
 
 class Chronos2Model(PreTrainedModel):
@@ -778,5 +753,4 @@ class Chronos2Model(PreTrainedModel):
             quantile_preds=quantile_preds,
             enc_time_self_attn_weights=encoder_outputs.all_time_self_attn_weights,
             enc_group_self_attn_weights=encoder_outputs.all_group_self_attn_weights,
-            enc_cross_group_attn_weights=encoder_outputs.all_cross_group_attn_weights,
         )
