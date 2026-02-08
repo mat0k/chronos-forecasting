@@ -1,0 +1,104 @@
+asts for nn5 (111 time series)
+Generating forecasts: 7it [00:04,  1.58it/s]
+2025-12-19 19:41:18,430 - Cross-Group Evaluation - INFO - Evaluating forecasts for nn5
+111it [00:00, 1748.26it/s]
+2025-12-19 19:41:18,495 - Cross-Group Evaluation - INFO - Loading monash_tourism_monthly
+2025-12-19 19:41:19,614 - Cross-Group Evaluation - INFO - Generating forecasts for monash_tourism_monthly (366 time series)
+Generating forecasts: 23it [00:06,  3.66it/s]
+2025-12-19 19:41:25,927 - Cross-Group Evaluation - INFO - Evaluating forecasts for monash_tourism_monthly
+0it [00:00, ?it/s]/Users/hassine_elghazel/Desktop/Data science and engineering/a.y 2025 2026/First semester/Deep natural language processing/Project/Test/chronos-forecasting/.venv/lib/python3.11/site-packages/gluonts/time_feature/seasonality.py:47: FutureWarning: 'M' is deprecated and will be removed in a future version, please use 'ME' instead.
+  offset = pd.tseries.frequencies.to_offset(freq)
+366it [00:00, 1984.15it/s]
+2025-12-19 19:41:26,112 - Cross-Group Evaluation - INFO - Loading m4_quarterly
+2025-12-19 19:41:30,298 - Cross-Group Evaluation - INFO - Generating forecasts for m4_quarterly (24000 time series)
+Generating forecasts: 1500it [04:16,  5.85it/s]
+2025-12-19 19:45:48,353 - Cross-Group Evaluation - INFO - Evaluating forecasts for m4_quarterly
+0it [00:00, ?it/s]/Users/hassine_elghazel/Desktop/Data science and engineering/a.y 2025 2026/First semester/Deep natural language processing/Project/Test/chronos-forecasting/.venv/lib/python3.11/site-packages/gluonts/time_feature/seasonality.py:47: FutureWarning: 'Q-DEC' is deprecated and will be removed in a future version, please use 'QE-DEC' instead.
+  offset = pd.tseries.frequencies.to_offset(freq)
+24000it [00:10, 2374.65it/s]
+2025-12-19 19:45:58,462 - Cross-Group Evaluation - INFO - Loading monash_hospital
+2025-12-19 19:46:00,526 - Cross-Group Evaluation - INFO - Generating forecasts for monash_hospital (767 time series)
+Generating forecasts: 48it [00:06,  7.46it/s]
+2025-12-19 19:46:07,028 - Cross-Group Evaluation - INFO - Evaluating forecasts for monash_hospital
+0it [00:00, ?it/s]/Users/hassine_elghazel/Desktop/Data science and engineering/a.y 2025 2026/First semester/Deep natural language processing/Project/Test/chronos-forecasting/.venv/lib/python3.11/site-packages/gluonts/time_feature/seasonality.py:47: FutureWarning: 'M' is deprecated and will be removed in a future version, please use 'ME' instead.
+  offset = pd.tseries.frequencies.to_offset(freq)
+767it [00:00, 2425.25it/s]
+2025-12-19 19:46:07,353 - Cross-Group Evaluation - INFO - 
+Cross-Group Attention Results:
+                         dataset                           model      MASE       WQL
+5                       dominick  chronos2_cross_group_attention  0.831924  0.327409
+0                          ercot  chronos2_cross_group_attention  0.786710  0.024512
+3                  exchange_rate  chronos2_cross_group_attention  1.850329  0.010139
+8                   m4_quarterly  chronos2_cross_group_attention  1.198811  0.075139
+1  monash_australian_electricity  chronos2_cross_group_attention  0.603821  0.028309
+9                monash_hospital  chronos2_cross_group_attention  0.749291  0.050383
+7         monash_tourism_monthly  chronos2_cross_group_attention  1.455593  0.078239
+2                 monash_traffic  chronos2_cross_group_attention  0.814572  0.235142
+4                 monash_weather  chronos2_cross_group_attention  0.780920  0.126322
+6                            nn5  chronos2_cross_group_attention  0.559831  0.145188
+2025-12-19 19:46:07,353 - Cross-Group Evaluation - INFO - ============================================================
+2025-12-19 19:46:07,353 - Cross-Group Evaluation - INFO - COMPARISON SUMMARY
+2025-12-19 19:46:07,353 - Cross-Group Evaluation - INFO - ============================================================
+2025-12-19 19:46:07,359 - Cross-Group Evaluation - INFO - 
+MASE Comparison:
+2025-12-19 19:46:07,360 - Cross-Group Evaluation - INFO - model                          chronos2_baseline  chronos2_cross_group_attention  chronos2_cross_learning
+dataset                                                                                                  
+dominick                                0.808580                        0.831924                 0.823823
+ercot                                   0.831766                        0.786710                 0.776498
+exchange_rate                           1.852047                        1.850329                 1.878751
+m4_quarterly                            1.200795                        1.198811                 1.166562
+monash_australian_electricity           0.629161                        0.603821                 0.613463
+monash_hospital                         0.772583                        0.749291                 0.748976
+monash_tourism_monthly                  1.422579                        1.455593                 1.423966
+monash_traffic                          0.818365                        0.814572                 0.829836
+monash_weather                          0.774144                        0.780920                 0.777400
+nn5                                     0.576813                        0.559831                 0.558983
+2025-12-19 19:46:07,360 - Cross-Group Evaluation - INFO - 
+WQL Comparison:
+2025-12-19 19:46:07,361 - Cross-Group Evaluation - INFO - model                          chronos2_baseline  chronos2_cross_group_attention  chronos2_cross_learning
+dataset                                                                                                  
+dominick                                0.324389                        0.327409                 0.323733
+ercot                                   0.025958                        0.024512                 0.024569
+exchange_rate                           0.012116                        0.010139                 0.012138
+m4_quarterly                            0.075973                        0.075139                 0.073917
+monash_australian_electricity           0.030728                        0.028309                 0.028784
+monash_hospital                         0.053917                        0.050383                 0.051442
+monash_tourism_monthly                  0.072520                        0.078239                 0.071126
+monash_traffic                          0.241514                        0.235142                 0.242579
+monash_weather                          0.125326                        0.126322                 0.125861
+nn5                                     0.148752                        0.145188                 0.145325
+2025-12-19 19:46:07,361 - Cross-Group Evaluation - INFO - 
+============================================================
+2025-12-19 19:46:07,361 - Cross-Group Evaluation - INFO - IMPROVEMENT OVER BASELINE (positive = better)
+2025-12-19 19:46:07,361 - Cross-Group Evaluation - INFO - ============================================================
+2025-12-19 19:46:07,362 - Cross-Group Evaluation - INFO - 
+MASE Improvement (%):
+dataset
+dominick                        -2.887016
+ercot                            5.416991
+exchange_rate                    0.092762
+m4_quarterly                     0.165164
+monash_australian_electricity    4.027590
+monash_hospital                  3.014772
+monash_tourism_monthly          -2.320706
+monash_traffic                   0.463460
+monash_weather                  -0.875214
+nn5                              2.944067
+2025-12-19 19:46:07,362 - Cross-Group Evaluation - INFO - 
+WQL Improvement (%):
+dataset
+dominick                         -0.931230
+ercot                             5.570127
+exchange_rate                    16.313906
+m4_quarterly                      1.097703
+monash_australian_electricity     7.873914
+monash_hospital                   6.554683
+monash_tourism_monthly           -7.886484
+monash_traffic                    2.638662
+monash_weather                   -0.794908
+nn5                               2.396193
+2025-12-19 19:46:07,362 - Cross-Group Evaluation - INFO - 
+Average MASE Improvement: 1.00%
+2025-12-19 19:46:07,362 - Cross-Group Evaluation - INFO - Average WQL Improvement: 3.28%
+2025-12-19 19:46:07,365 - Cross-Group Evaluation - INFO - 
+Results saved to /tmp/cross_group_extended_results.csv
