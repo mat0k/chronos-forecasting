@@ -1,0 +1,69 @@
+RESULTS SUMMARY
+================================================================================
+               benchmark_task  MASE_baseline  WQL_baseline  MASE_soft  WQL_soft
+               monash_traffic       0.818365      0.241514   0.829632  0.243077
+monash_australian_electricity       0.629161      0.030728   0.582945  0.029543
+                        ercot       0.831767      0.025958   0.816833  0.025509
+                exchange_rate       1.852046      0.012116   1.880288  0.012562
+                          nn5       0.576813      0.148752   0.561654  0.146184
+            monash_nn5_weekly       0.882498      0.081598   0.884090  0.081185
+               monash_weather       0.774144      0.125326   0.774560  0.125505
+          monash_covid_deaths      35.405554      0.039213  33.719922  0.037251
+               monash_fred_md       0.468734      0.019539   0.486395  0.027307
+                 m4_quarterly       1.200795      0.075973   1.177532  0.074363
+                    m4_yearly       3.377616      0.117251   3.328904  0.115091
+                     dominick       0.808580      0.324389   0.818448  0.324564
+                           m5       0.905111      0.552674   0.914863  0.566235
+       monash_tourism_monthly       1.422579      0.072520   1.428531  0.072039
+     monash_tourism_quarterly       1.566490      0.064875   1.544944  0.060024
+        monash_tourism_yearly       3.666207      0.151526   3.664122  0.148564
+             monash_car_parts       0.833560      0.961073   0.838908  0.967864
+              monash_hospital       0.772583      0.053917   0.753377  0.053155
+              monash_cif_2016       0.933350      0.010883   0.884833  0.010101
+             monash_m1_yearly       3.829575      0.138180   3.752845  0.136639
+          monash_m1_quarterly       1.661286      0.083373   1.657897  0.092325
+            monash_m1_monthly       1.027037      0.146557   1.020317  0.127765
+            monash_m3_monthly       0.813479      0.088737   0.826979  0.088946
+             monash_m3_yearly       2.996326      0.146757   2.987476  0.148460
+          monash_m3_quarterly       1.162110      0.070462   1.141137  0.068784
+                      ETTH_1H       2.065500           NaN   1.935100       NaN
+                      ETTH_1W       1.864200           NaN   1.788100       NaN
+                        m5_1D       0.596900           NaN   0.593600       NaN
+
+
+
+
+OVERALL STATISTICS
+================================================================================
+
+BASELINE (Hard Group Masking):
+  Average MASE: 2.7686
+  Average WQL:  0.1514
+
+SOFT MASKING (Correlation-based):
+  Average MASE: 2.6811
+  Average WQL:  0.1505
+
+IMPROVEMENT:
+  MASE: +2.80%
+  WQL:  +0.02%
+
+================================================================================
+STATISTICAL SIGNIFICANCE (Paired t-test)
+================================================================================
+
+MASE: t=1.1541, p=0.259818
+WQL:  t=0.0297, p=0.976548
+
+Significance level: α = 0.05
+✗ MASE difference is NOT statistically significant (p >= 0.05)
+✗ WQL difference is NOT statistically significant (p >= 0.05)
+
+================================================================================
+EFFECT SIZE (Cohen's d)
+================================================================================
+
+MASE Cohen's d: 0.0116
+WQL Cohen's d:  0.0002
+
+Interpretation: <0.2=negligible, 0.2-0.5=small, 0.5-0.8=medium, >0.8=large
